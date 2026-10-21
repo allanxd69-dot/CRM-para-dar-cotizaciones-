@@ -1,0 +1,1690 @@
+```html
+<!DOCTYPE html>
+<html lang="es" class="h-full bg-slate-50">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>CotizaApp Pro - Cotizaciones, Ventas y Google Drive Sync</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0f172a">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3135/3135706.png">
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            800: '#3730a3',
+                            900: '#312e81',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Alpine.js CDN -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Google Identity Services (OAuth2) SDK -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    
+    <style>
+        body {
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 22px;
+            width: 22px;
+            border-radius: 50%;
+            background: #4f46e5;
+            cursor: pointer;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+        }
+    </style>
+</head>
+<body class="h-full text-slate-800 flex flex-col justify-between overflow-x-hidden antialiased select-none" x-data="app()" x-init="initApp()">
+
+    <!-- BARRA SUPERIOR / HEADER -->
+    <header class="bg-slate-900 text-white sticky top-0 z-30 shadow-md">
+        <div class="px-4 py-3 flex items-center justify-between max-w-md mx-auto">
+            <div class="flex items-center space-x-2.5">
+                <div class="bg-brand-600 p-2 rounded-xl text-white shadow-sm flex items-center justify-center">
+                    <i data-lucide="store" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-sm leading-tight truncate max-w-[160px]" x-text="settings.businessName || 'Electrodomésticos San José'"></h1>
+                    <p class="text-[11px] text-slate-400 flex items-center space-x-1">
+                        <i data-lucide="user" class="w-3 h-3 text-brand-500"></i>
+                        <span x-text="settings.advisorName || 'Allan Nolasco'"></span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- Indicador de Estado de Google Drive y Botones de Acción -->
+            <div class="flex items-center space-x-2">
+                <!-- Badge Estado Sync Google Drive -->
+                <button @click="setTab('settings')" title="Estado Google Drive" class="flex items-center space-x-1 px-2 py-1 rounded-lg text-[10px] font-bold border transition"
+                        :class="{
+                            'bg-emerald-950 text-emerald-300 border-emerald-700': driveState.connected && driveState.status === 'idle',
+                            'bg-amber-950 text-amber-300 border-amber-700 animate-pulse': driveState.status === 'syncing',
+                            'bg-slate-800 text-slate-400 border-slate-700': !driveState.connected
+                        }">
+                    <i data-lucide="cloud" class="w-3.5 h-3.5"></i>
+                    <span x-text="driveState.connected ? (driveState.status === 'syncing' ? 'Sync...' : 'Drive ON') : 'Drive Off'"></span>
+                </button>
+
+                <!-- Botón Principal según pestaña -->
+                <template x-if="activeTab === 'quotes'">
+                    <button @click="openQuoteModal()" class="bg-brand-600 hover:bg-brand-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow flex items-center space-x-1 active:scale-95 transition">
+                        <i data-lucide="plus" class="w-4 h-4"></i>
+                        <span>Nueva</span>
+                    </button>
+                </template>
+                <template x-if="activeTab === 'sales'">
+                    <button @click="openSaleModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow flex items-center space-x-1 active:scale-95 transition">
+                        <i data-lucide="shopping-cart" class="w-4 h-4"></i>
+                        <span>Venta</span>
+                    </button>
+                </template>
+                <template x-if="activeTab === 'contacts'">
+                    <button @click="openContactModal()" class="bg-brand-600 hover:bg-brand-700 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow flex items-center space-x-1 active:scale-95 transition">
+                        <i data-lucide="user-plus" class="w-4 h-4"></i>
+                        <span>Nuevo</span>
+                    </button>
+                </template>
+            </div>
+        </div>
+    </header>
+
+    <!-- CONTENIDO PRINCIPAL -->
+    <main class="flex-1 max-w-md w-full mx-auto p-4 pb-28 overflow-y-auto hide-scrollbar">
+
+        <!-- Toast de Notificación Personalizada -->
+        <div x-show="toast.show" 
+             x-transition:enter="transition ease-out duration-300"
+             x-transition:enter-start="opacity-0 transform -translate-y-4"
+             x-transition:enter-end="opacity-100 transform translate-y-0"
+             x-transition:leave="transition ease-in duration-200"
+             x-transition:leave-start="opacity-100 transform translate-y-0"
+             x-transition:leave-end="opacity-0 transform -translate-y-4"
+             class="fixed top-16 left-4 right-4 z-50 max-w-sm mx-auto bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-2xl flex items-center space-x-3 border border-slate-700"
+             style="display: none;">
+            <i data-lucide="check-circle-2" class="w-5 h-5 text-emerald-400 shrink-0"></i>
+            <span class="text-xs font-medium flex-1" x-text="toast.message"></span>
+        </div>
+
+        <!-- ========================================================== -->
+        <!-- PESTAÑA 1: COTIZACIONES (CONTADO Y CRÉDITO) -->
+        <!-- ========================================================== -->
+        <div x-show="activeTab === 'quotes'" class="space-y-4">
+            
+            <!-- Buscador y Filtro -->
+            <div class="flex items-center space-x-2">
+                <div class="relative flex-1">
+                    <i data-lucide="search" class="w-4 h-4 absolute left-3 top-3 text-slate-400"></i>
+                    <input type="text" x-model="searchQuotes" placeholder="Buscar cliente o folio..." class="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-sm">
+                </div>
+                <select x-model="filterQuotesPayment" class="bg-white border border-slate-200 text-xs rounded-xl px-2 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-sm font-medium">
+                    <option value="all">Todas</option>
+                    <option value="contado">Contado</option>
+                    <option value="credito">Crédito</option>
+                </select>
+            </div>
+
+            <!-- Lista de Cotizaciones -->
+            <div class="space-y-3">
+                <template x-for="quote in filteredQuotes" :key="quote.id">
+                    <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <div class="flex items-center space-x-2">
+                                    <span class="font-bold text-slate-900 text-xs" x-text="'#' + quote.code"></span>
+                                    
+                                    <span class="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider"
+                                          :class="quote.paymentType === 'credito' ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'"
+                                          x-text="quote.paymentType === 'credito' ? 'CRÉDITO' : 'CONTADO'">
+                                    </span>
+
+                                    <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold"
+                                          :class="{
+                                              'bg-slate-100 text-slate-600': quote.status === 'pending',
+                                              'bg-indigo-100 text-indigo-800': quote.status === 'approved',
+                                              'bg-teal-100 text-teal-800': quote.status === 'converted'
+                                          }"
+                                          x-text="quote.status === 'converted' ? 'Vendido' : (quote.status === 'approved' ? 'Aprobada' : 'Pendiente')">
+                                    </span>
+                                </div>
+                                <h3 class="font-bold text-slate-800 mt-1.5 text-base" x-text="quote.clientName"></h3>
+                                <p class="text-xs text-slate-400" x-text="quote.clientPhone || 'Sin teléfono'"></p>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-[10px] text-slate-400 block" x-text="formatDate(quote.date)"></span>
+                                <span class="text-lg font-black text-brand-600 block mt-1" x-text="formatMoney(quote.total)"></span>
+                            </div>
+                        </div>
+
+                        <!-- Resumen de Ítems -->
+                        <div class="bg-slate-50 p-2.5 rounded-xl text-xs space-y-1 text-slate-600 border border-slate-100">
+                            <template x-for="item in quote.items" :key="item.id">
+                                <div class="flex justify-between">
+                                    <span x-text="item.qty + 'x ' + item.name"></span>
+                                    <span class="font-medium" x-text="formatMoney(item.qty * item.price)"></span>
+                                </div>
+                            </template>
+                        </div>
+
+                        <!-- Desglose Crédito si Aplica -->
+                        <template x-if="quote.paymentType === 'credito'">
+                            <div class="bg-gradient-to-br from-amber-50 to-orange-50 p-3 rounded-xl border border-amber-200/60 text-xs space-y-1.5 text-amber-900">
+                                <div class="flex justify-between items-center font-semibold border-b border-amber-200/50 pb-1">
+                                    <span class="flex items-center space-x-1">
+                                        <i data-lucide="credit-card" class="w-3.5 h-3.5 text-amber-700"></i>
+                                        <span>Plan de Financiamiento:</span>
+                                    </span>
+                                    <span class="bg-amber-200/80 text-amber-900 px-1.5 py-0.5 rounded text-[10px] font-bold" x-text="quote.months + ' Meses'"></span>
+                                </div>
+                                <div class="grid grid-cols-2 gap-2 text-[11px] pt-0.5">
+                                    <div>
+                                        <span class="text-slate-500 block">Prima (<span x-text="quote.downPaymentPercent + '%'"></span>):</span>
+                                        <span class="font-bold text-slate-800" x-text="formatMoney(quote.downPaymentAmount)"></span>
+                                    </div>
+                                    <div>
+                                        <span class="text-slate-500 block">Saldo Financiado:</span>
+                                        <span class="font-bold text-slate-800" x-text="formatMoney(quote.financedAmount)"></span>
+                                    </div>
+                                </div>
+                                <div class="bg-white/90 p-2 rounded-lg border border-amber-200 flex justify-between items-center mt-1">
+                                    <span class="font-bold text-amber-900">Cuota Mensual:</span>
+                                    <span class="text-sm font-black text-amber-700" x-text="formatMoney(quote.monthlyPayment) + ' / mes'"></span>
+                                </div>
+                            </div>
+                        </template>
+
+                        <!-- Acciones -->
+                        <div class="flex items-center justify-between pt-1 border-t border-slate-100">
+                            <div class="flex space-x-1.5">
+                                <button @click="sendQuoteWhatsApp(quote)" class="bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1 active:scale-95 transition">
+                                    <i data-lucide="message-circle" class="w-3.5 h-3.5 text-emerald-600"></i>
+                                    <span>Compartir WA</span>
+                                </button>
+
+                                <button @click="confirmDeleteQuote(quote.id)" class="text-slate-400 hover:text-red-500 p-1.5 rounded-xl transition">
+                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+
+                            <template x-if="quote.status !== 'converted'">
+                                <button @click="convertQuoteToSale(quote)" class="bg-brand-600 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow hover:bg-brand-700 active:scale-95 transition flex items-center space-x-1">
+                                    <i data-lucide="shopping-bag" class="w-3.5 h-3.5"></i>
+                                    <span>Convertir a Venta</span>
+                                </button>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+
+                <template x-if="filteredQuotes.length === 0">
+                    <div class="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-200 p-6">
+                        <i data-lucide="file-text" class="w-12 h-12 text-slate-300 mx-auto mb-2"></i>
+                        <p class="text-slate-500 font-medium text-sm">No hay cotizaciones registradas</p>
+                        <p class="text-xs text-slate-400 mt-1">Presiona en "+ Nueva" para crear una</p>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- ========================================================== -->
+        <!-- PESTAÑA 2: VENTAS REGISTRADAS -->
+        <!-- ========================================================== -->
+        <div x-show="activeTab === 'sales'" class="space-y-4">
+            
+            <!-- Resumen de Métricas del Día -->
+            <div class="grid grid-cols-2 gap-2">
+                <div class="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
+                    <span class="text-[10px] font-bold text-slate-400 uppercase block">Ventas Hoy</span>
+                    <span class="text-lg font-black text-emerald-600 mt-0.5 block" x-text="formatMoney(todaySalesTotal)"></span>
+                </div>
+                <div class="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
+                    <span class="text-[10px] font-bold text-slate-400 uppercase block">Transacciones</span>
+                    <span class="text-lg font-black text-slate-800 mt-0.5 block" x-text="todaySalesCount + ' ventas'"></span>
+                </div>
+            </div>
+
+            <!-- Buscador y Filtros -->
+            <div class="flex items-center space-x-2">
+                <div class="relative flex-1">
+                    <i data-lucide="search" class="w-4 h-4 absolute left-3 top-3 text-slate-400"></i>
+                    <input type="text" x-model="searchSales" placeholder="Buscar cliente o folio..." class="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-sm">
+                </div>
+                <select x-model="filterSalesType" class="bg-white border border-slate-200 text-xs rounded-xl px-2 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-sm font-medium">
+                    <option value="all">Todas</option>
+                    <option value="contado">Contado</option>
+                    <option value="credito">Crédito</option>
+                </select>
+            </div>
+
+            <!-- Lista de Ventas -->
+            <div class="space-y-3">
+                <template x-for="sale in filteredSales" :key="sale.id">
+                    <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3" :class="{'opacity-60 bg-slate-50': sale.status === 'voided'}">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <div class="flex items-center space-x-2">
+                                    <span class="font-bold text-slate-900 text-xs" x-text="'#' + sale.code"></span>
+                                    <span class="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase"
+                                          :class="sale.status === 'voided' ? 'bg-red-100 text-red-800' : (sale.paymentType === 'credito' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')"
+                                          x-text="sale.status === 'voided' ? 'Anulada' : (sale.paymentType === 'credito' ? 'Crédito' : 'Contado')">
+                                    </span>
+                                </div>
+                                <h3 class="font-bold text-slate-800 mt-1 text-base" x-text="sale.clientName"></h3>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-[10px] text-slate-400 block" x-text="formatDate(sale.date)"></span>
+                                <span class="text-lg font-black text-slate-900 block mt-1" :class="{'line-through text-red-500': sale.status === 'voided'}" x-text="formatMoney(sale.total)"></span>
+                            </div>
+                        </div>
+
+                        <div class="bg-slate-50 p-2.5 rounded-xl text-xs space-y-1 text-slate-600 border border-slate-100">
+                            <template x-for="item in sale.items" :key="item.id">
+                                <div class="flex justify-between">
+                                    <span x-text="item.qty + 'x ' + item.name"></span>
+                                    <span class="font-medium" x-text="formatMoney(item.qty * item.price)"></span>
+                                </div>
+                            </template>
+                        </div>
+
+                        <div class="flex justify-between items-center pt-1 border-t border-slate-100">
+                            <span class="text-[10px] text-slate-400" x-text="sale.quoteCode ? 'Origen: Cotización #' + sale.quoteCode : 'Venta Directa'"></span>
+                            <template x-if="sale.status !== 'voided'">
+                                <button @click="confirmVoidSale(sale.id)" class="text-xs text-red-600 hover:bg-red-50 px-2.5 py-1 rounded-lg font-semibold transition">Anular Venta</button>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+
+                <template x-if="filteredSales.length === 0">
+                    <div class="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-200 p-6">
+                        <i data-lucide="shopping-bag" class="w-12 h-12 text-slate-300 mx-auto mb-2"></i>
+                        <p class="text-slate-500 font-medium text-sm">No hay ventas registradas</p>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- ========================================================== -->
+        <!-- PESTAÑA 3: REPORTE DIARIO DE WHATSAPP -->
+        <!-- ========================================================== -->
+        <div x-show="activeTab === 'reports'" class="space-y-4">
+            
+            <div class="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <i data-lucide="calendar" class="w-5 h-5 text-brand-600"></i>
+                    <span class="text-xs font-semibold text-slate-700">Fecha del Reporte:</span>
+                </div>
+                <input type="date" x-model="reportDate" @change="loadDailyReportData()" class="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500">
+            </div>
+
+            <!-- Dashboard de Totales del Día -->
+            <div class="bg-gradient-to-br from-slate-900 to-slate-800 text-white p-4 rounded-2xl shadow-lg space-y-3">
+                <div class="flex justify-between items-start border-b border-slate-700 pb-3">
+                    <div>
+                        <span class="text-[11px] font-medium text-slate-400 block uppercase tracking-wider">💰 Venta Lograda Hoy</span>
+                        <span class="text-2xl font-black text-emerald-400 mt-0.5 block" x-text="formatMoney(dailyCalculated.ventaLograda)"></span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-[10px] text-slate-400 block">🎯 Meta del Día</span>
+                        <input type="number" step="0.01" x-model.number="currentReportInput.metaDia" @input="saveDailyReportData()" class="w-28 bg-slate-800 border border-slate-600 rounded-lg px-2 py-1 text-xs text-right font-bold text-sky-400 focus:outline-none">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-3 gap-2 text-center pt-1">
+                    <div class="bg-slate-800/80 p-2 rounded-xl border border-slate-700">
+                        <span class="text-[10px] text-slate-400 block">📊 % Cumpl.</span>
+                        <span class="text-sm font-black" :class="dailyCalculated.porcentajeCumplimiento >= 100 ? 'text-emerald-400' : 'text-amber-400'" x-text="dailyCalculated.porcentajeCumplimiento + '%'"></span>
+                    </div>
+                    <div class="bg-slate-800/80 p-2 rounded-xl border border-slate-700">
+                        <span class="text-[10px] text-slate-400 block">🔁 Crédito</span>
+                        <span class="text-xs font-bold text-amber-300" x-text="formatMoney(dailyCalculated.ventasCredito)"></span>
+                    </div>
+                    <div class="bg-slate-800/80 p-2 rounded-xl border border-slate-700">
+                        <span class="text-[10px] text-slate-400 block">💵 Contado</span>
+                        <span class="text-xs font-bold text-emerald-300" x-text="formatMoney(dailyCalculated.ventasContado)"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Formulario de Campos Adicionales -->
+            <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3">
+                <h3 class="font-bold text-sm text-slate-800 flex items-center space-x-2 border-b border-slate-100 pb-2">
+                    <i data-lucide="edit-3" class="w-4 h-4 text-brand-600"></i>
+                    <span>Detalles del Turno (Asesor)</span>
+                </h3>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">⭐ Qué producto (Destacado / Más Vendido)</label>
+                    <input type="text" x-model="currentReportInput.productosDestacados" @input="saveDailyReportData()" placeholder="Ej: Refrigeradora Mabe 14 pies" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">👥 Clientes atendidos</label>
+                    <input type="text" x-model="currentReportInput.clientesAtendidos" @input="saveDailyReportData()" placeholder="Ej: 18 clientes" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">❗ Oportunidades perdidas</label>
+                    <textarea x-model="currentReportInput.oportunidadesPerdidas" @input="saveDailyReportData()" rows="2" placeholder="Ej: Sin stock en lavadora de 18kg" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500"></textarea>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">📝 Observaciones del día</label>
+                    <textarea x-model="currentReportInput.observaciones" @input="saveDailyReportData()" rows="2" placeholder="Ej: Turno muy concurrido en la tarde" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500"></textarea>
+                </div>
+            </div>
+
+            <!-- Botón WhatsApp -->
+            <button @click="sendDailyReportWhatsApp()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-2xl font-bold text-sm shadow-lg flex items-center justify-center space-x-2 active:scale-95 transition">
+                <i data-lucide="message-circle" class="w-5 h-5"></i>
+                <span>Enviar Reporte por WhatsApp</span>
+            </button>
+        </div>
+
+        <!-- ========================================================== -->
+        <!-- PESTAÑA 4: CONTACTOS -->
+        <!-- ========================================================== -->
+        <div x-show="activeTab === 'contacts'" class="space-y-4">
+            
+            <div class="bg-slate-900 p-4 rounded-2xl text-white shadow-md space-y-2">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <h3 class="font-bold text-sm">Importar de tu Celular</h3>
+                        <p class="text-[11px] text-slate-300">Sincroniza contactos del teléfono</p>
+                    </div>
+                    <i data-lucide="smartphone" class="w-6 h-6 text-brand-400"></i>
+                </div>
+                <button @click="importNativeContacts()" class="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold py-2.5 rounded-xl text-xs shadow flex items-center justify-center space-x-2 active:scale-95 transition">
+                    <i data-lucide="download-cloud" class="w-4 h-4"></i>
+                    <span>Seleccionar de la Agenda</span>
+                </button>
+            </div>
+
+            <div class="relative">
+                <i data-lucide="search" class="w-4 h-4 absolute left-3 top-3 text-slate-400"></i>
+                <input type="text" x-model="searchContacts" placeholder="Buscar por nombre o teléfono..." class="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 shadow-sm">
+            </div>
+
+            <div class="space-y-2">
+                <template x-for="contact in filteredContacts" :key="contact.id">
+                    <div class="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 rounded-full bg-brand-100 text-brand-700 font-bold flex items-center justify-center text-xs" x-text="getInitials(contact.name)"></div>
+                            <div>
+                                <h4 class="font-semibold text-slate-800 text-sm" x-text="contact.name"></h4>
+                                <p class="text-xs text-slate-500" x-text="contact.phone || 'Sin teléfono'"></p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center space-x-1">
+                            <template x-if="contact.phone">
+                                <a :href="'https://wa.me/' + contact.phone.replace(/[^0-9]/g, '')" target="_blank" title="WhatsApp" class="p-2 text-emerald-600 hover:bg-emerald-50 rounded-xl transition">
+                                    <i data-lucide="message-circle" class="w-4 h-4"></i>
+                                </a>
+                            </template>
+                            <button @click="createQuoteForContact(contact)" title="Nueva Cotización" class="p-2 bg-brand-50 text-brand-700 rounded-xl hover:bg-brand-100 transition">
+                                <i data-lucide="file-plus" class="w-4 h-4"></i>
+                            </button>
+                            <button @click="confirmDeleteContact(contact.id)" title="Eliminar" class="p-2 text-slate-300 hover:text-red-500 rounded-xl transition">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                    </div>
+                </template>
+
+                <template x-if="filteredContacts.length === 0">
+                    <div class="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-200 p-6">
+                        <i data-lucide="users" class="w-12 h-12 text-slate-300 mx-auto mb-2"></i>
+                        <p class="text-slate-500 font-medium text-sm">No hay contactos guardados</p>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- ========================================================== -->
+        <!-- PESTAÑA 5: AJUSTES Y GOOGLE DRIVE SYNC -->
+        <!-- ========================================================== -->
+        <div x-show="activeTab === 'settings'" class="space-y-4">
+            
+            <!-- Módulo de Sincronización Automática con Google Drive -->
+            <div class="bg-gradient-to-br from-slate-900 to-indigo-950 p-4 rounded-2xl text-white shadow-md space-y-3">
+                <div class="flex justify-between items-center border-b border-slate-700 pb-2">
+                    <div class="flex items-center space-x-2">
+                        <i data-lucide="cloud" class="w-5 h-5 text-brand-400"></i>
+                        <h3 class="font-bold text-sm">Google Drive Sincronización</h3>
+                    </div>
+                    <span class="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase"
+                          :class="driveState.connected ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-slate-800 text-slate-400'"
+                          x-text="driveState.connected ? 'Conectado' : 'Desconectado'">
+                    </span>
+                </div>
+
+                <div class="space-y-2 text-xs">
+                    <div>
+                        <label class="block text-[11px] text-slate-300 mb-1">ID de Cliente Google Cloud (OAuth 2.0)</label>
+                        <input type="text" x-model="settings.googleClientId" placeholder="apps.googleusercontent.com" class="w-full bg-slate-800/80 border border-slate-700 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    </div>
+
+                    <div class="flex items-center justify-between py-1">
+                        <span class="text-xs text-slate-300 font-medium">Auto Sincronizar en Segundo Plano</span>
+                        <button type="button" @click="settings.autoDriveSync = !settings.autoDriveSync; saveSettings()" class="w-11 h-6 bg-slate-700 rounded-full transition relative p-0.5" :class="{'bg-brand-600': settings.autoDriveSync}">
+                            <div class="w-5 h-5 bg-white rounded-full shadow transition transform" :class="{'translate-x-5': settings.autoDriveSync}"></div>
+                        </button>
+                    </div>
+
+                    <p class="text-[11px] text-slate-400" x-text="driveState.lastSyncTime ? 'Última sincronización: ' + driveState.lastSyncTime : 'Aún no se ha sincronizado'"></p>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2 pt-1">
+                    <template x-if="!driveState.connected">
+                        <button @click="connectGoogleDrive()" class="col-span-2 bg-brand-600 hover:bg-brand-700 text-white font-bold py-2.5 rounded-xl text-xs shadow flex items-center justify-center space-x-1.5 active:scale-95 transition">
+                            <i data-lucide="log-in" class="w-4 h-4"></i>
+                            <span>Conectar con Google Drive</span>
+                        </button>
+                    </template>
+
+                    <template x-if="driveState.connected">
+                        <div class="col-span-2 grid grid-cols-3 gap-1.5">
+                            <button @click="syncToDrive(false)" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center space-x-1 active:scale-95 transition">
+                                <i data-lucide="upload-cloud" class="w-3.5 h-3.5"></i>
+                                <span>Subir</span>
+                            </button>
+                            <button @click="syncFromDrive()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-xl text-xs flex items-center justify-center space-x-1 active:scale-95 transition">
+                                <i data-lucide="download-cloud" class="w-3.5 h-3.5"></i>
+                                <span>Bajar</span>
+                            </button>
+                            <button @click="disconnectGoogleDrive()" class="bg-slate-800 text-slate-300 hover:bg-slate-700 font-bold py-2 rounded-xl text-xs flex items-center justify-center space-x-1 active:scale-95 transition">
+                                <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+                                <span>Salir</span>
+                            </button>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Datos del Negocio -->
+            <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3">
+                <h3 class="font-bold text-sm text-slate-800 flex items-center space-x-2 border-b border-slate-100 pb-2">
+                    <i data-lucide="building-2" class="w-4 h-4 text-brand-600"></i>
+                    <span>Datos de Tienda y Asesor</span>
+                </h3>
+
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Nombre de la Tienda</label>
+                        <input type="text" x-model="settings.businessName" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Nombre del Asesor</label>
+                        <input type="text" x-model="settings.advisorName" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">Meta Diaria (L / $)</label>
+                            <input type="number" step="0.01" x-model.number="settings.dailyGoal" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">Moneda (Símbolo)</label>
+                            <input type="text" x-model="settings.currencySymbol" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Impuesto Base (%)</label>
+                        <input type="number" min="0" x-model.number="settings.defaultTax" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    </div>
+
+                    <button @click="saveSettings()" class="w-full bg-slate-900 text-white py-2.5 rounded-xl font-bold text-xs shadow hover:bg-slate-800 active:scale-95 transition">
+                        Guardar Configuración
+                    </button>
+                </div>
+            </div>
+
+            <!-- Respaldo Local -->
+            <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3">
+                <h3 class="font-bold text-sm text-slate-800 flex items-center space-x-2 border-b border-slate-100 pb-2">
+                    <i data-lucide="database" class="w-4 h-4 text-brand-600"></i>
+                    <span>Copia de Seguridad Local</span>
+                </h3>
+
+                <div class="grid grid-cols-2 gap-2">
+                    <button @click="exportBackupJSON()" class="bg-slate-800 text-white py-2.5 rounded-xl font-bold text-xs shadow flex items-center justify-center space-x-1.5 hover:bg-slate-900 active:scale-95 transition">
+                        <i data-lucide="download" class="w-4 h-4"></i>
+                        <span>Exportar JSON</span>
+                    </button>
+
+                    <label class="bg-slate-100 text-slate-700 py-2.5 rounded-xl font-bold text-xs shadow flex items-center justify-center space-x-1.5 hover:bg-slate-200 cursor-pointer active:scale-95 transition">
+                        <i data-lucide="upload" class="w-4 h-4"></i>
+                        <span>Restaurar JSON</span>
+                        <input type="file" accept=".json" class="hidden" @change="importBackupJSON($event)">
+                    </label>
+                </div>
+            </div>
+
+            <!-- Reset Completo -->
+            <div class="bg-red-50 p-4 rounded-2xl border border-red-100 space-y-2">
+                <h3 class="font-bold text-sm text-red-800 flex items-center space-x-2">
+                    <i data-lucide="alert-triangle" class="w-4 h-4 text-red-600"></i>
+                    <span>Borrar Todos los Datos</span>
+                </h3>
+                <button @click="confirmResetAll()" class="w-full bg-red-600 text-white py-2.5 rounded-xl font-bold text-xs shadow hover:bg-red-700 active:scale-95 transition">
+                    Restablecer de Fábrica
+                </button>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- BARRA DE NAVEGACIÓN INFERIOR (5 PESTAÑAS) -->
+    <nav class="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200 pb-safe shadow-lg">
+        <div class="max-w-md mx-auto grid grid-cols-5 h-16">
+            
+            <button @click="setTab('quotes')" 
+                    class="flex flex-col items-center justify-center space-y-1 transition-colors"
+                    :class="activeTab === 'quotes' ? 'text-brand-600 font-bold' : 'text-slate-400 font-normal'">
+                <i data-lucide="file-text" class="w-5 h-5"></i>
+                <span class="text-[9px]">Cotizar</span>
+            </button>
+
+            <button @click="setTab('sales')" 
+                    class="flex flex-col items-center justify-center space-y-1 transition-colors"
+                    :class="activeTab === 'sales' ? 'text-brand-600 font-bold' : 'text-slate-400 font-normal'">
+                <i data-lucide="shopping-bag" class="w-5 h-5"></i>
+                <span class="text-[9px]">Ventas</span>
+            </button>
+
+            <button @click="setTab('reports')" 
+                    class="flex flex-col items-center justify-center space-y-1 transition-colors"
+                    :class="activeTab === 'reports' ? 'text-brand-600 font-bold' : 'text-slate-400 font-normal'">
+                <i data-lucide="bar-chart-3" class="w-5 h-5"></i>
+                <span class="text-[9px]">Reporte</span>
+            </button>
+
+            <button @click="setTab('contacts')" 
+                    class="flex flex-col items-center justify-center space-y-1 transition-colors"
+                    :class="activeTab === 'contacts' ? 'text-brand-600 font-bold' : 'text-slate-400 font-normal'">
+                <i data-lucide="users" class="w-5 h-5"></i>
+                <span class="text-[9px]">Contactos</span>
+            </button>
+
+            <button @click="setTab('settings')" 
+                    class="flex flex-col items-center justify-center space-y-1 transition-colors"
+                    :class="activeTab === 'settings' ? 'text-brand-600 font-bold' : 'text-slate-400 font-normal'">
+                <i data-lucide="settings" class="w-5 h-5"></i>
+                <span class="text-[9px]">Ajustes</span>
+            </button>
+
+        </div>
+    </nav>
+
+    <!-- MODAL NUEVA COTIZACIÓN -->
+    <div x-show="showQuoteModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" style="display: none;">
+        <div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+            
+            <div class="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                <h3 class="font-bold text-slate-800 text-base">Nueva Cotización</h3>
+                <button @click="showQuoteModal = false" class="text-slate-400 p-1"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+
+            <div class="p-4 overflow-y-auto space-y-4 flex-1">
+                
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1.5">Modalidad de Pago</label>
+                    <div class="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-2xl">
+                        <button type="button" 
+                                @click="quoteForm.paymentType = 'contado'" 
+                                :class="quoteForm.paymentType === 'contado' ? 'bg-white text-brand-700 shadow font-bold' : 'text-slate-500 font-medium'"
+                                class="py-2.5 rounded-xl text-xs transition flex items-center justify-center space-x-1.5">
+                            <i data-lucide="banknote" class="w-4 h-4"></i>
+                            <span>Contado</span>
+                        </button>
+                        <button type="button" 
+                                @click="quoteForm.paymentType = 'credito'" 
+                                :class="quoteForm.paymentType === 'credito' ? 'bg-amber-500 text-white shadow font-bold' : 'text-slate-500 font-medium'"
+                                class="py-2.5 rounded-xl text-xs transition flex items-center justify-center space-x-1.5">
+                            <i data-lucide="credit-card" class="w-4 h-4"></i>
+                            <span>Crédito</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Cliente</label>
+                    <select x-model="quoteForm.selectedContactId" @change="onContactSelectChange()" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800 mb-2">
+                        <option value="">-- Seleccionar de la Agenda --</option>
+                        <template x-for="c in contacts" :key="c.id">
+                            <option :value="c.id" x-text="c.name + ' (' + (c.phone || 'Sin tel') + ')'"></option>
+                        </template>
+                    </select>
+                    <div class="grid grid-cols-2 gap-2">
+                        <input type="text" x-model="quoteForm.clientName" placeholder="Nombre completo *" class="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs">
+                        <input type="tel" x-model="quoteForm.clientPhone" placeholder="WhatsApp / Teléfono" class="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs">
+                    </div>
+                </div>
+
+                <div>
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="text-xs font-semibold text-slate-600">Artículos / Productos</label>
+                        <button @click="addQuoteItem()" class="text-brand-600 text-xs font-bold flex items-center space-x-1">
+                            <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                            <span>Agregar Fila</span>
+                        </button>
+                    </div>
+
+                    <div class="space-y-2">
+                        <template x-for="(item, index) in quoteForm.items" :key="index">
+                            <div class="bg-slate-50 p-2.5 rounded-xl border border-slate-200 space-y-2">
+                                <div class="flex items-center space-x-2">
+                                    <input type="text" x-model="item.name" placeholder="Ej. TV Samsung 55 UHD" class="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-xs">
+                                    <button @click="removeQuoteItem(index)" class="text-slate-400 hover:text-red-500 p-1">
+                                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                    </button>
+                                </div>
+                                <div class="grid grid-cols-3 gap-2">
+                                    <input type="number" min="1" x-model.number="item.qty" placeholder="Cant." class="bg-white border border-slate-200 rounded-lg p-2 text-xs text-center">
+                                    <input type="number" step="0.01" min="0" x-model.number="item.price" placeholder="Precio U." class="bg-white border border-slate-200 rounded-lg p-2 text-xs text-center">
+                                    <div class="p-2 bg-slate-100 rounded-lg text-xs font-bold text-center text-slate-700 truncate" x-text="formatMoney(item.qty * item.price)"></div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    <div>
+                        <label class="text-[11px] font-semibold text-slate-600 block">Impuesto / ISV (%)</label>
+                        <input type="number" min="0" x-model.number="quoteForm.taxPercent" class="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs">
+                    </div>
+                    <div>
+                        <label class="text-[11px] font-semibold text-slate-600 block">Descuento Global</label>
+                        <input type="number" min="0" x-model.number="quoteForm.discount" class="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs">
+                    </div>
+                </div>
+
+                <!-- CALCULADORA DE CRÉDITO -->
+                <template x-if="quoteForm.paymentType === 'credito'">
+                    <div class="bg-gradient-to-br from-amber-50 to-orange-50 p-3.5 rounded-2xl border border-amber-200 space-y-3">
+                        <div class="flex items-center space-x-1.5 text-amber-900 border-b border-amber-200/60 pb-2">
+                            <i data-lucide="sliders" class="w-4 h-4 text-amber-700"></i>
+                            <h4 class="font-bold text-xs">Cálculo de Financiamiento</h4>
+                        </div>
+
+                        <div>
+                            <div class="flex justify-between text-xs mb-1">
+                                <span class="font-semibold text-amber-900">Porcentaje de Prima:</span>
+                                <span class="font-bold text-amber-800" x-text="quoteForm.downPaymentPercent + '%'"></span>
+                            </div>
+                            <div class="grid grid-cols-5 gap-1.5 mb-2">
+                                <template x-for="pct in [0, 10, 15, 20, 30]" :key="pct">
+                                    <button type="button" 
+                                            @click="quoteForm.downPaymentPercent = pct" 
+                                            :class="quoteForm.downPaymentPercent === pct ? 'bg-amber-600 text-white font-bold' : 'bg-white text-slate-700 border border-amber-200'" 
+                                            class="py-1 rounded-lg text-xs transition">
+                                        <span x-text="pct + '%'"></span>
+                                    </button>
+                                </template>
+                            </div>
+                            <input type="range" min="0" max="60" step="5" x-model.number="quoteForm.downPaymentPercent" class="w-full accent-amber-600 h-1.5 bg-amber-200 rounded-lg appearance-none cursor-pointer">
+                        </div>
+
+                        <div>
+                            <div class="flex justify-between text-xs mb-1">
+                                <span class="font-semibold text-amber-900">Plazo en Meses:</span>
+                                <span class="font-black text-amber-900 text-sm" x-text="quoteForm.months + ' Meses'"></span>
+                            </div>
+                            <input type="range" min="1" max="18" step="1" x-model.number="quoteForm.months" class="w-full accent-amber-600 h-2 bg-amber-200 rounded-lg appearance-none cursor-pointer">
+                            <div class="flex justify-between text-[10px] text-amber-700 font-medium px-0.5 mt-1">
+                                <span>1m</span>
+                                <span>6m</span>
+                                <span>12m</span>
+                                <span>18m</span>
+                            </div>
+                        </div>
+
+                        <div class="bg-white p-3 rounded-xl border border-amber-200/80 space-y-1.5 text-xs text-slate-700 shadow-sm">
+                            <div class="flex justify-between text-amber-900">
+                                <span>Prima Requerida (<span x-text="quoteForm.downPaymentPercent + '%'"></span>):</span>
+                                <span class="font-bold" x-text="formatMoney(getCalculatedDownPayment())"></span>
+                            </div>
+                            <div class="flex justify-between text-slate-600">
+                                <span>Saldo a Financiar:</span>
+                                <span class="font-bold" x-text="formatMoney(getCalculatedFinancedAmount())"></span>
+                            </div>
+                            <div class="flex justify-between text-base font-black text-amber-800 pt-2 border-t border-slate-100">
+                                <span>Cuota Mensual:</span>
+                                <span x-text="formatMoney(getCalculatedMonthlyPayment()) + ' / mes'"></span>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
+                <div class="bg-slate-900 text-white p-3.5 rounded-2xl flex justify-between items-center">
+                    <div>
+                        <span class="text-[10px] font-bold uppercase text-slate-400 block" x-text="'Modalidad: ' + quoteForm.paymentType"></span>
+                        <span class="text-xs font-bold text-slate-200">Total de Contado:</span>
+                    </div>
+                    <span class="text-xl font-black text-emerald-400" x-text="formatMoney(calculateQuoteTotal())"></span>
+                </div>
+            </div>
+
+            <div class="p-4 border-t border-slate-100 bg-white grid grid-cols-2 gap-2">
+                <button @click="showQuoteModal = false" class="w-full bg-slate-100 text-slate-600 py-3 rounded-xl font-bold text-xs">Cancelar</button>
+                <button @click="saveQuote()" class="w-full bg-brand-600 text-white py-3 rounded-xl font-bold text-xs shadow-md">Guardar Cotización</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL REGISTRO VENTA DIRECTA -->
+    <div x-show="showSaleModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" style="display: none;">
+        <div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            <div class="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                <h3 class="font-bold text-slate-800 text-base">Registrar Venta Directa</h3>
+                <button @click="showSaleModal = false" class="text-slate-400 p-1"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+
+            <div class="p-4 overflow-y-auto space-y-4 flex-1">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Tipo de Venta</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button type="button" @click="saleForm.paymentType = 'contado'" :class="saleForm.paymentType === 'contado' ? 'bg-emerald-600 text-white font-bold' : 'bg-slate-100 text-slate-600'" class="py-2 rounded-xl text-xs">Contado</button>
+                        <button type="button" @click="saleForm.paymentType = 'credito'" :class="saleForm.paymentType === 'credito' ? 'bg-amber-600 text-white font-bold' : 'bg-slate-100 text-slate-600'" class="py-2 rounded-xl text-xs">Crédito</button>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Cliente</label>
+                    <input type="text" x-model="saleForm.clientName" placeholder="Nombre del cliente" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs">
+                </div>
+
+                <div>
+                    <div class="flex justify-between items-center mb-2">
+                        <label class="text-xs font-semibold text-slate-600">Productos</label>
+                        <button @click="addSaleItem()" class="text-brand-600 text-xs font-bold flex items-center space-x-1">
+                            <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                            <span>Agregar Fila</span>
+                        </button>
+                    </div>
+
+                    <div class="space-y-2">
+                        <template x-for="(item, index) in saleForm.items" :key="index">
+                            <div class="bg-slate-50 p-2.5 rounded-xl border border-slate-200 space-y-2">
+                                <div class="flex items-center space-x-2">
+                                    <input type="text" x-model="item.name" placeholder="Ej: Refrigeradora Mabe" class="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-xs">
+                                    <button @click="removeSaleItem(index)" class="text-slate-400 hover:text-red-500 p-1">
+                                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                    </button>
+                                </div>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <input type="number" min="1" x-model.number="item.qty" placeholder="Cant." class="bg-white border border-slate-200 rounded-lg p-2 text-xs text-center">
+                                    <input type="number" step="0.01" min="0" x-model.number="item.price" placeholder="Precio" class="bg-white border border-slate-200 rounded-lg p-2 text-xs text-center">
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <div class="bg-slate-900 text-white p-3.5 rounded-2xl flex justify-between items-center">
+                    <span class="text-xs font-medium text-slate-300">Total Venta:</span>
+                    <span class="text-xl font-black text-emerald-400" x-text="formatMoney(calculateSaleTotal())"></span>
+                </div>
+            </div>
+
+            <div class="p-4 border-t border-slate-100 bg-white grid grid-cols-2 gap-2">
+                <button @click="showSaleModal = false" class="w-full bg-slate-100 text-slate-600 py-3 rounded-xl font-bold text-xs">Cancelar</button>
+                <button @click="saveSale()" class="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold text-xs shadow-md">Completar Venta</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL NUEVO CONTACTO -->
+    <div x-show="showContactModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" style="display: none;">
+        <div class="bg-white w-full max-w-sm rounded-3xl p-4 shadow-2xl space-y-3">
+            <div class="flex justify-between items-center border-b border-slate-100 pb-2">
+                <h3 class="font-bold text-slate-800 text-base">Nuevo Contacto</h3>
+                <button @click="showContactModal = false" class="text-slate-400"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+
+            <div class="space-y-2">
+                <input type="text" x-model="contactForm.name" placeholder="Nombre completo *" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs">
+                <input type="tel" x-model="contactForm.phone" placeholder="Teléfono / WhatsApp" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs">
+                <input type="text" x-model="contactForm.notes" placeholder="Notas o dirección" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs">
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 pt-2">
+                <button @click="showContactModal = false" class="w-full bg-slate-100 text-slate-600 py-2.5 rounded-xl font-bold text-xs">Cancelar</button>
+                <button @click="saveContact()" class="w-full bg-brand-600 text-white py-2.5 rounded-xl font-bold text-xs shadow">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL CONFIRMACIÓN PERSONALIZADO -->
+    <div x-show="confirmDialog.show" class="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4" style="display: none;">
+        <div class="bg-white w-full max-w-xs rounded-3xl p-5 shadow-2xl space-y-3 text-center">
+            <div class="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+                <i data-lucide="alert-triangle" class="w-6 h-6"></i>
+            </div>
+            <h3 class="font-bold text-slate-800 text-base" x-text="confirmDialog.title"></h3>
+            <p class="text-xs text-slate-500 leading-relaxed" x-text="confirmDialog.message"></p>
+
+            <div class="grid grid-cols-2 gap-2 pt-2">
+                <button @click="confirmDialog.show = false" class="w-full bg-slate-100 text-slate-700 py-2.5 rounded-xl font-bold text-xs">Cancelar</button>
+                <button @click="executeConfirmAction()" class="w-full bg-red-600 text-white py-2.5 rounded-xl font-bold text-xs shadow">Confirmar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- LOGICA JS PRINCIPAL -->
+    <script>
+        function app() {
+            return {
+                activeTab: 'quotes',
+                reportDate: new Date().toISOString().split('T')[0],
+                
+                searchQuotes: '',
+                filterQuotesPayment: 'all',
+                searchSales: '',
+                filterSalesType: 'all',
+                searchContacts: '',
+
+                toast: { show: false, message: '' },
+                confirmDialog: { show: false, title: '', message: '', action: null },
+
+                // Estado de Sincronización Google Drive
+                driveState: {
+                    connected: false,
+                    status: 'idle', // 'idle', 'syncing', 'error'
+                    tokenClient: null,
+                    accessToken: null,
+                    fileId: null,
+                    lastSyncTime: null
+                },
+
+                settings: {
+                    businessName: 'Electrodomésticos San José',
+                    advisorName: 'Allan Nolasco',
+                    dailyGoal: 20029.66,
+                    currencySymbol: 'L',
+                    defaultTax: 15,
+                    googleClientId: '123456789-example.apps.googleusercontent.com',
+                    autoDriveSync: true
+                },
+
+                contacts: [],
+                quotes: [],
+                sales: [],
+                
+                currentReportInput: {
+                    metaDia: 20029.66,
+                    productosDestacados: '',
+                    clientesAtendidos: '',
+                    oportunidadesPerdidas: '',
+                    observaciones: ''
+                },
+
+                showQuoteModal: false,
+                showSaleModal: false,
+                showContactModal: false,
+
+                quoteForm: {
+                    selectedContactId: '',
+                    clientName: '',
+                    clientPhone: '',
+                    paymentType: 'contado',
+                    items: [{ name: '', qty: 1, price: 0 }],
+                    taxPercent: 15,
+                    discount: 0,
+                    downPaymentPercent: 20,
+                    months: 12
+                },
+
+                saleForm: {
+                    clientName: '',
+                    paymentType: 'contado',
+                    items: [{ name: '', qty: 1, price: 0 }]
+                },
+
+                contactForm: { name: '', phone: '', notes: '' },
+
+                initApp() {
+                    const savedSettings = localStorage.getItem('cotiza_settings');
+                    if (savedSettings) this.settings = Object.assign(this.settings, JSON.parse(savedSettings));
+
+                    this.contacts = JSON.parse(localStorage.getItem('cotiza_contacts') || '[]');
+                    this.quotes = JSON.parse(localStorage.getItem('cotiza_quotes') || '[]');
+                    this.sales = JSON.parse(localStorage.getItem('cotiza_sales') || '[]');
+
+                    if (this.contacts.length === 0 && this.quotes.length === 0) {
+                        this.seedDemoData();
+                    }
+
+                    this.loadDailyReportData();
+                    this.refreshIcons();
+
+                    // Recuperar token y datos previa sesión de Google Drive si existe
+                    const savedToken = localStorage.getItem('cotiza_drive_token');
+                    if (savedToken) {
+                        this.driveState.accessToken = savedToken;
+                        this.driveState.connected = true;
+                        this.driveState.lastSyncTime = localStorage.getItem('cotiza_drive_last_sync') || null;
+                    }
+                },
+
+                refreshIcons() {
+                    this.$nextTick(() => {
+                        if (window.lucide) lucide.createIcons();
+                    });
+                },
+
+                setTab(tab) {
+                    this.activeTab = tab;
+                    if (tab === 'reports') {
+                        this.loadDailyReportData();
+                    }
+                    this.refreshIcons();
+                },
+
+                showToast(msg) {
+                    this.toast.message = msg;
+                    this.toast.show = true;
+                    setTimeout(() => { this.toast.show = false; }, 3000);
+                },
+
+                openConfirm(title, message, action) {
+                    this.confirmDialog.title = title;
+                    this.confirmDialog.message = message;
+                    this.confirmDialog.action = action;
+                    this.confirmDialog.show = true;
+                    this.refreshIcons();
+                },
+
+                executeConfirmAction() {
+                    if (typeof this.confirmDialog.action === 'function') {
+                        this.confirmDialog.action();
+                    }
+                    this.confirmDialog.show = false;
+                },
+
+                formatMoney(amount) {
+                    const symbol = this.settings.currencySymbol || 'L';
+                    const formatted = (amount || 0).toLocaleString('es-HN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    return `${symbol} ${formatted}`;
+                },
+
+                formatDate(isoString) {
+                    if (!isoString) return '';
+                    const d = new Date(isoString);
+                    return d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+                },
+
+                formatDateSpanish(dateStr) {
+                    if (!dateStr) return '';
+                    const [year, month, day] = dateStr.split('-');
+                    return `${day}/${month}/${year}`;
+                },
+
+                getInitials(name) {
+                    if (!name) return 'C';
+                    const p = name.trim().split(' ');
+                    return p.length >= 2 ? (p[0][0] + p[1][0]).toUpperCase() : name.substring(0, 2).toUpperCase();
+                },
+
+                // ==========================================================
+                // SINCRONIZACIÓN AUTOMÁTICA CON GOOGLE DRIVE (REST API + GIS)
+                // ==========================================================
+                connectGoogleDrive() {
+                    if (!this.settings.googleClientId || this.settings.googleClientId.includes('example')) {
+                        this.showToast('Ingresa tu Google OAuth Client ID en Ajustes para conectar');
+                        return;
+                    }
+
+                    if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+                        this.showToast('Cargando API de Google... Intenta de nuevo en unos segundos');
+                        return;
+                    }
+
+                    try {
+                        this.driveState.tokenClient = google.accounts.oauth2.initTokenClient({
+                            client_id: this.settings.googleClientId,
+                            scope: 'https://www.googleapis.com/auth/drive.file',
+                            callback: (response) => {
+                                if (response.error) {
+                                    this.showToast('Error de autenticación con Google: ' + response.error);
+                                    return;
+                                }
+                                this.driveState.accessToken = response.access_token;
+                                this.driveState.connected = true;
+                                localStorage.setItem('cotiza_drive_token', response.access_token);
+                                this.showToast('¡Conectado exitosamente con Google Drive!');
+                                this.syncToDrive(false);
+                            }
+                        });
+
+                        this.driveState.tokenClient.requestAccessToken({ prompt: 'consent' });
+                    } catch (err) {
+                        this.showToast('Error al inicializar sesión de Google: ' + err.message);
+                    }
+                },
+
+                disconnectGoogleDrive() {
+                    this.driveState.connected = false;
+                    this.driveState.accessToken = null;
+                    this.driveState.fileId = null;
+                    localStorage.removeItem('cotiza_drive_token');
+                    this.showToast('Sesión de Google Drive cerrada');
+                },
+
+                async findDriveBackupFile() {
+                    if (!this.driveState.accessToken) return null;
+                    try {
+                        const res = await fetch('https://www.googleapis.com/drive/v3/files?q=name="cotizador_pos_backup.json" and trashed=false', {
+                            headers: { Authorization: 'Bearer ' + this.driveState.accessToken }
+                        });
+                        const data = await res.json();
+                        if (data.files && data.files.length > 0) {
+                            this.driveState.fileId = data.files[0].id;
+                            return data.files[0].id;
+                        }
+                        return null;
+                    } catch (e) {
+                        console.error('Error buscando archivo en Drive:', e);
+                        return null;
+                    }
+                },
+
+                async syncToDrive(isSilent = false) {
+                    if (!this.driveState.connected || !this.driveState.accessToken) return;
+
+                    this.driveState.status = 'syncing';
+                    const backupContent = JSON.stringify({
+                        settings: this.settings,
+                        quotes: this.quotes,
+                        sales: this.sales,
+                        contacts: this.contacts,
+                        exportedAt: new Date().toISOString()
+                    }, null, 2);
+
+                    try {
+                        let fileId = this.driveState.fileId || await this.findDriveBackupFile();
+
+                        if (fileId) {
+                            // Actualizar archivo existente
+                            await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+                                method: 'PATCH',
+                                headers: {
+                                    Authorization: 'Bearer ' + this.driveState.accessToken,
+                                    'Content-Type': 'application/json'
+                                },
+                                body: backupContent
+                            });
+                        } else {
+                            // Crear nuevo archivo
+                            const metadata = { name: 'cotizador_pos_backup.json', mimeType: 'application/json' };
+                            const form = new FormData();
+                            form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+                            form.append('file', new Blob([backupContent], { type: 'application/json' }));
+
+                            const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+                                method: 'POST',
+                                headers: { Authorization: 'Bearer ' + this.driveState.accessToken },
+                                body: form
+                            });
+                            const data = await res.json();
+                            this.driveState.fileId = data.id;
+                        }
+
+                        this.driveState.status = 'idle';
+                        const now = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+                        this.driveState.lastSyncTime = now;
+                        localStorage.setItem('cotiza_drive_last_sync', now);
+
+                        if (!isSilent) this.showToast('¡Respaldo subido a Google Drive!');
+                    } catch (err) {
+                        this.driveState.status = 'error';
+                        console.error('Error sincronizando con Drive:', err);
+                        if (!isSilent) this.showToast('Error al subir a Google Drive');
+                    }
+                },
+
+                async syncFromDrive() {
+                    if (!this.driveState.connected || !this.driveState.accessToken) {
+                        this.showToast('Conecta Google Drive primero');
+                        return;
+                    }
+
+                    this.driveState.status = 'syncing';
+                    try {
+                        const fileId = await this.findDriveBackupFile();
+                        if (!fileId) {
+                            this.showToast('No se encontró copia de respaldo en tu Google Drive');
+                            this.driveState.status = 'idle';
+                            return;
+                        }
+
+                        const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+                            headers: { Authorization: 'Bearer ' + this.driveState.accessToken }
+                        });
+                        const data = await res.json();
+
+                        if (data.settings) this.settings = Object.assign(this.settings, data.settings);
+                        if (data.quotes) this.quotes = data.quotes;
+                        if (data.sales) this.sales = data.sales;
+                        if (data.contacts) this.contacts = data.contacts;
+
+                        this.saveAllToStorage();
+                        this.driveState.status = 'idle';
+                        const now = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+                        this.driveState.lastSyncTime = now;
+                        this.showToast('¡Datos descargados desde Google Drive!');
+                    } catch (err) {
+                        this.driveState.status = 'error';
+                        this.showToast('Error al descargar de Google Drive');
+                    }
+                },
+
+                triggerAutoDriveSync() {
+                    if (this.driveState.connected && this.settings.autoDriveSync) {
+                        this.syncToDrive(true);
+                    }
+                },
+
+                // --- REPORTE DIARIO Y PLANTILLA EXACTA WHATSAPP ---
+                loadDailyReportData() {
+                    const key = 'cotiza_report_' + this.reportDate;
+                    const saved = localStorage.getItem(key);
+                    if (saved) {
+                        this.currentReportInput = JSON.parse(saved);
+                    } else {
+                        this.currentReportInput = {
+                            metaDia: this.settings.dailyGoal || 20029.66,
+                            productosDestacados: '',
+                            clientesAtendidos: '',
+                            oportunidadesPerdidas: '',
+                            observaciones: ''
+                        };
+                    }
+                },
+
+                saveDailyReportData() {
+                    const key = 'cotiza_report_' + this.reportDate;
+                    localStorage.setItem(key, JSON.stringify(this.currentReportInput));
+                    this.triggerAutoDriveSync();
+                },
+
+                get dailyCalculated() {
+                    const dateStr = this.reportDate;
+                    const salesToday = this.sales.filter(s => s.date.startsWith(dateStr) && s.status !== 'voided');
+
+                    const ventaLograda = salesToday.reduce((s, i) => s + i.total, 0);
+                    const ventasCredito = salesToday.filter(s => s.paymentType === 'credito').reduce((s, i) => s + i.total, 0);
+                    const ventasContado = salesToday.filter(s => s.paymentType === 'contado').reduce((s, i) => s + i.total, 0);
+                    
+                    const meta = this.currentReportInput.metaDia || 20029.66;
+                    const porcentajeCumplimiento = meta > 0 ? ((ventaLograda / meta) * 100).toFixed(2) : '0.00';
+
+                    return { ventaLograda, ventasCredito, ventasContado, metaDia: meta, porcentajeCumplimiento };
+                },
+
+                sendDailyReportWhatsApp() {
+                    const calc = this.dailyCalculated;
+                    const input = this.currentReportInput;
+
+                    // Formato exacto requerido
+                    let text = `📍Tienda: ${this.settings.businessName || 'Electrodomésticos San José'}\n`;
+                    text += `👤 Asesor: ${this.settings.advisorName || 'Allan Nolasco'}\n`;
+                    text += `📅 Fecha: ${this.formatDateSpanish(this.reportDate)}\n`;
+                    text += `🎯 Meta del día: ${calc.metaDia}\n`;
+                    text += `💰 Venta lograda: ${calc.ventaLograda.toFixed(2)}\n`;
+                    text += `📊 % Cumplimiento: ${calc.porcentajeCumplimiento}%\n`;
+                    text += `🔁 Ventas a crédito: ${calc.ventasCredito.toFixed(2)}\n`;
+                    text += `💵 Ventas contado: ${calc.ventasContado.toFixed(2)}\n`;
+                    text += `⭐Que producto: ${input.productosDestacados || ''}\n`;
+                    text += `👥Clientes atendidos : ${input.clientesAtendidos || ''}\n`;
+                    text += `❗Oportunidades perdidas: ${input.oportunidadesPerdidas || ''}\n`;
+                    text += `📝 Observaciones del dia: ${input.observaciones || ''}`;
+
+                    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
+                    window.open(url, '_blank');
+                },
+
+                // --- MANEJO DE COTIZACIONES ---
+                calculateQuoteTotal() {
+                    const subtotal = this.quoteForm.items.reduce((s, i) => s + ((i.qty || 0) * (i.price || 0)), 0);
+                    const tax = subtotal * ((this.quoteForm.taxPercent || 0) / 100);
+                    return Math.max(0, subtotal + tax - (this.quoteForm.discount || 0));
+                },
+
+                getCalculatedDownPayment() {
+                    const total = this.calculateQuoteTotal();
+                    return total * ((this.quoteForm.downPaymentPercent || 0) / 100);
+                },
+
+                getCalculatedFinancedAmount() {
+                    const total = this.calculateQuoteTotal();
+                    const downPayment = this.getCalculatedDownPayment();
+                    return Math.max(0, total - downPayment);
+                },
+
+                getCalculatedMonthlyPayment() {
+                    const financed = this.getCalculatedFinancedAmount();
+                    const months = Math.max(1, this.quoteForm.months || 1);
+                    return financed / months;
+                },
+
+                openQuoteModal() {
+                    this.quoteForm = {
+                        selectedContactId: '',
+                        clientName: '',
+                        clientPhone: '',
+                        paymentType: 'contado',
+                        items: [{ name: '', qty: 1, price: 0 }],
+                        taxPercent: this.settings.defaultTax || 0,
+                        discount: 0,
+                        downPaymentPercent: 20,
+                        months: 12
+                    };
+                    this.showQuoteModal = true;
+                    this.refreshIcons();
+                },
+
+                addQuoteItem() { this.quoteForm.items.push({ name: '', qty: 1, price: 0 }); },
+                removeQuoteItem(idx) { if (this.quoteForm.items.length > 1) this.quoteForm.items.splice(idx, 1); },
+
+                onContactSelectChange() {
+                    const c = this.contacts.find(item => item.id == this.quoteForm.selectedContactId);
+                    if (c) {
+                        this.quoteForm.clientName = c.name;
+                        this.quoteForm.clientPhone = c.phone;
+                    }
+                },
+
+                saveQuote() {
+                    if (!this.quoteForm.clientName) {
+                        this.showToast('Escribe el nombre del cliente');
+                        return;
+                    }
+
+                    const total = this.calculateQuoteTotal();
+                    const isCredit = this.quoteForm.paymentType === 'credito';
+
+                    const newQuote = {
+                        id: Date.now(),
+                        code: 'COT-' + Math.floor(1000 + Math.random() * 9000),
+                        date: new Date().toISOString(),
+                        clientName: this.quoteForm.clientName,
+                        clientPhone: this.quoteForm.clientPhone,
+                        paymentType: this.quoteForm.paymentType,
+                        items: JSON.parse(JSON.stringify(this.quoteForm.items)),
+                        taxPercent: this.quoteForm.taxPercent,
+                        discount: this.quoteForm.discount,
+                        total: total,
+                        downPaymentPercent: isCredit ? this.quoteForm.downPaymentPercent : 0,
+                        downPaymentAmount: isCredit ? this.getCalculatedDownPayment() : 0,
+                        financedAmount: isCredit ? this.getCalculatedFinancedAmount() : 0,
+                        months: isCredit ? this.quoteForm.months : 0,
+                        monthlyPayment: isCredit ? this.getCalculatedMonthlyPayment() : 0,
+                        status: 'pending'
+                    };
+
+                    this.quotes.unshift(newQuote);
+                    localStorage.setItem('cotiza_quotes', JSON.stringify(this.quotes));
+                    this.showQuoteModal = false;
+                    this.showToast('Cotización guardada exitosamente');
+                    this.triggerAutoDriveSync();
+                    this.refreshIcons();
+                },
+
+                confirmDeleteQuote(id) {
+                    this.openConfirm('Eliminar Cotización', '¿Deseas eliminar esta cotización?', () => {
+                        this.quotes = this.quotes.filter(q => q.id !== id);
+                        localStorage.setItem('cotiza_quotes', JSON.stringify(this.quotes));
+                        this.showToast('Cotización eliminada');
+                        this.triggerAutoDriveSync();
+                    });
+                },
+
+                sendQuoteWhatsApp(quote) {
+                    let text = `📄 *COTIZACIÓN #${quote.code}*\n`;
+                    text += `📍 *${this.settings.businessName || 'Electrodomésticos San José'}*\n`;
+                    text += `👤 *Asesor:* ${this.settings.advisorName || 'Allan Nolasco'}\n`;
+                    text += `👤 *Cliente:* ${quote.clientName}\n`;
+                    text += `-----------------------------------\n`;
+                    quote.items.forEach(i => {
+                        text += `• ${i.qty}x ${i.name} - ${this.formatMoney(i.qty * i.price)}\n`;
+                    });
+                    text += `-----------------------------------\n`;
+                    if (quote.discount > 0) text += `Descuento: -${this.formatMoney(quote.discount)}\n`;
+                    text += `💰 *TOTAL CONTADO:* ${this.formatMoney(quote.total)}\n\n`;
+
+                    if (quote.paymentType === 'credito') {
+                        text += `💳 *DESGLOSE DE FINANCIAMIENTO:*\n`;
+                        text += `🟢 *Prima (${quote.downPaymentPercent}%):* ${this.formatMoney(quote.downPaymentAmount)}\n`;
+                        text += `📉 *Saldo a Financiar:* ${this.formatMoney(quote.financedAmount)}\n`;
+                        text += `📅 *Plazo:* ${quote.months} Meses\n`;
+                        text += `🗓️ *CUOTA MENSUAL ESTIMADA:* ${this.formatMoney(quote.monthlyPayment)} / mes\n\n`;
+                    }
+
+                    text += `¡Quedamos a su orden para completar su pedido!`;
+
+                    const phoneClean = (quote.clientPhone || '').replace(/[^0-9]/g, '');
+                    const url = phoneClean 
+                        ? `https://wa.me/${phoneClean}?text=${encodeURIComponent(text)}`
+                        : `https://wa.me/?text=${encodeURIComponent(text)}`;
+                    window.open(url, '_blank');
+                },
+
+                convertQuoteToSale(quote) {
+                    const newSale = {
+                        id: Date.now(),
+                        code: 'VEN-' + Math.floor(1000 + Math.random() * 9000),
+                        quoteCode: quote.code,
+                        date: new Date().toISOString(),
+                        clientName: quote.clientName,
+                        paymentType: quote.paymentType,
+                        items: JSON.parse(JSON.stringify(quote.items)),
+                        total: quote.total,
+                        status: 'active'
+                    };
+
+                    quote.status = 'converted';
+                    this.sales.unshift(newSale);
+                    localStorage.setItem('cotiza_quotes', JSON.stringify(this.quotes));
+                    localStorage.setItem('cotiza_sales', JSON.stringify(this.sales));
+                    this.showToast('¡Convertida a Venta!');
+                    this.triggerAutoDriveSync();
+                    this.setTab('sales');
+                },
+
+                get filteredQuotes() {
+                    return this.quotes.filter(q => {
+                        const matchesSearch = q.clientName.toLowerCase().includes(this.searchQuotes.toLowerCase()) ||
+                                              q.code.toLowerCase().includes(this.searchQuotes.toLowerCase());
+                        const matchesType = this.filterQuotesPayment === 'all' || q.paymentType === this.filterQuotesPayment;
+                        return matchesSearch && matchesType;
+                    });
+                },
+
+                // --- MANEJO DE VENTAS ---
+                openSaleModal() {
+                    this.saleForm = { clientName: '', paymentType: 'contado', items: [{ name: '', qty: 1, price: 0 }] };
+                    this.showSaleModal = true;
+                    this.refreshIcons();
+                },
+
+                addSaleItem() { this.saleForm.items.push({ name: '', qty: 1, price: 0 }); },
+                removeSaleItem(idx) { if (this.saleForm.items.length > 1) this.saleForm.items.splice(idx, 1); },
+
+                calculateSaleTotal() {
+                    return this.saleForm.items.reduce((s, i) => s + ((i.qty || 0) * (i.price || 0)), 0);
+                },
+
+                saveSale() {
+                    if (!this.saleForm.clientName) {
+                        this.showToast('Ingresa el nombre del cliente');
+                        return;
+                    }
+
+                    const newSale = {
+                        id: Date.now(),
+                        code: 'VEN-' + Math.floor(1000 + Math.random() * 9000),
+                        date: new Date().toISOString(),
+                        clientName: this.saleForm.clientName,
+                        paymentType: this.saleForm.paymentType,
+                        items: JSON.parse(JSON.stringify(this.saleForm.items)),
+                        total: this.calculateSaleTotal(),
+                        status: 'active'
+                    };
+
+                    this.sales.unshift(newSale);
+                    localStorage.setItem('cotiza_sales', JSON.stringify(this.sales));
+                    this.showSaleModal = false;
+                    this.showToast('Venta registrada con éxito');
+                    this.triggerAutoDriveSync();
+                    this.refreshIcons();
+                },
+
+                confirmVoidSale(id) {
+                    this.openConfirm('Anular Venta', '¿Deseas anular esta venta?', () => {
+                        const sale = this.sales.find(s => s.id === id);
+                        if (sale) sale.status = 'voided';
+                        localStorage.setItem('cotiza_sales', JSON.stringify(this.sales));
+                        this.showToast('Venta anulada');
+                        this.triggerAutoDriveSync();
+                    });
+                },
+
+                get todaySalesTotal() {
+                    const todayStr = new Date().toISOString().split('T')[0];
+                    return this.sales
+                        .filter(s => s.date.startsWith(todayStr) && s.status !== 'voided')
+                        .reduce((acc, s) => acc + s.total, 0);
+                },
+
+                get todaySalesCount() {
+                    const todayStr = new Date().toISOString().split('T')[0];
+                    return this.sales.filter(s => s.date.startsWith(todayStr) && s.status !== 'voided').length;
+                },
+
+                get filteredSales() {
+                    return this.sales.filter(s => {
+                        const matchesSearch = s.clientName.toLowerCase().includes(this.searchSales.toLowerCase()) ||
+                                              s.code.toLowerCase().includes(this.searchSales.toLowerCase());
+                        const matchesType = this.filterSalesType === 'all' || s.paymentType === this.filterSalesType;
+                        return matchesSearch && matchesType;
+                    });
+                },
+
+                // --- CONTACTOS ---
+                async importNativeContacts() {
+                    if ('contacts' in navigator && 'ContactsManager' in window) {
+                        try {
+                            const selected = await navigator.contacts.select(['name', 'tel'], { multiple: true });
+                            if (selected && selected.length) {
+                                let count = 0;
+                                selected.forEach(c => {
+                                    const name = c.name && c.name[0] ? c.name[0] : 'Sin Nombre';
+                                    const phone = c.tel && c.tel[0] ? c.tel[0] : '';
+                                    if (!this.contacts.some(item => item.phone === phone && phone !== '')) {
+                                        this.contacts.push({ id: Date.now() + Math.random(), name, phone, notes: 'Importado de celular' });
+                                        count++;
+                                    }
+                                });
+                                localStorage.setItem('cotiza_contacts', JSON.stringify(this.contacts));
+                                this.showToast(`¡${count} contactos importados!`);
+                                this.triggerAutoDriveSync();
+                            }
+                        } catch (err) {
+                            console.warn(err);
+                        }
+                    } else {
+                        this.showToast('Sincronizador de agenda listo para dispositivos móviles compatibles.');
+                    }
+                },
+
+                openContactModal() {
+                    this.contactForm = { name: '', phone: '', notes: '' };
+                    this.showContactModal = true;
+                },
+
+                saveContact() {
+                    if (!this.contactForm.name) {
+                        this.showToast('Escribe el nombre del cliente');
+                        return;
+                    }
+
+                    this.contacts.unshift({
+                        id: Date.now(),
+                        name: this.contactForm.name,
+                        phone: this.contactForm.phone,
+                        notes: this.contactForm.notes
+                    });
+
+                    localStorage.setItem('cotiza_contacts', JSON.stringify(this.contacts));
+                    this.showContactModal = false;
+                    this.showToast('Contacto guardado');
+                    this.triggerAutoDriveSync();
+                    this.refreshIcons();
+                },
+
+                confirmDeleteContact(id) {
+                    this.openConfirm('Eliminar Contacto', '¿Deseas borrar este contacto?', () => {
+                        this.contacts = this.contacts.filter(c => c.id !== id);
+                        localStorage.setItem('cotiza_contacts', JSON.stringify(this.contacts));
+                        this.showToast('Contacto eliminado');
+                        this.triggerAutoDriveSync();
+                    });
+                },
+
+                createQuoteForContact(contact) {
+                    this.openQuoteModal();
+                    this.quoteForm.clientName = contact.name;
+                    this.quoteForm.clientPhone = contact.phone;
+                },
+
+                get filteredContacts() {
+                    return this.contacts.filter(c => 
+                        c.name.toLowerCase().includes(this.searchContacts.toLowerCase()) ||
+                        (c.phone && c.phone.includes(this.searchContacts))
+                    );
+                },
+
+                // --- CONFIGURACIÓN & RESPALDO ---
+                saveSettings() {
+                    localStorage.setItem('cotiza_settings', JSON.stringify(this.settings));
+                    this.showToast('Configuración actualizada');
+                    this.triggerAutoDriveSync();
+                },
+
+                exportBackupJSON() {
+                    const backupData = {
+                        settings: this.settings,
+                        quotes: this.quotes,
+                        sales: this.sales,
+                        contacts: this.contacts,
+                        exportedAt: new Date().toISOString()
+                    };
+                    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = `Respaldo_Ventas_${new Date().toISOString().split('T')[0]}.json`;
+                    link.click();
+                },
+
+                importBackupJSON(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        try {
+                            const parsed = JSON.parse(e.target.result);
+                            if (parsed.settings) this.settings = Object.assign(this.settings, parsed.settings);
+                            if (parsed.quotes) this.quotes = parsed.quotes;
+                            if (parsed.sales) this.sales = parsed.sales;
+                            if (parsed.contacts) this.contacts = parsed.contacts;
+
+                            this.saveAllToStorage();
+                            this.showToast('¡Respaldo local restaurado!');
+                            this.triggerAutoDriveSync();
+                        } catch (err) {
+                            this.showToast('El archivo JSON no es válido');
+                        }
+                    };
+                    reader.readAsText(file);
+                },
+
+                confirmResetAll() {
+                    this.openConfirm('Restablecer de Fábrica', 'ADVERTENCIA: Se borrarán todas las cotizaciones, ventas y contactos.', () => {
+                        localStorage.clear();
+                        this.contacts = [];
+                        this.quotes = [];
+                        this.sales = [];
+                        this.showToast('Aplicación restablecida');
+                    });
+                },
+
+                saveAllToStorage() {
+                    localStorage.setItem('cotiza_settings', JSON.stringify(this.settings));
+                    localStorage.setItem('cotiza_quotes', JSON.stringify(this.quotes));
+                    localStorage.setItem('cotiza_sales', JSON.stringify(this.sales));
+                    localStorage.setItem('cotiza_contacts', JSON.stringify(this.contacts));
+                },
+
+                seedDemoData() {
+                    this.contacts = [
+                        { id: 1, name: 'Carlos Mendoza', phone: '+504 9876-5432', notes: 'Cliente interesado en Smart TV' }
+                    ];
+                    this.quotes = [
+                        {
+                            id: 101,
+                            code: 'COT-5021',
+                            date: new Date().toISOString(),
+                            clientName: 'Carlos Mendoza',
+                            clientPhone: '+504 9876-5432',
+                            paymentType: 'credito',
+                            items: [{ name: 'Refrigeradora Mabe 14 pies', qty: 1, price: 15400 }],
+                            taxPercent: 15,
+                            discount: 0,
+                            total: 17710,
+                            downPaymentPercent: 20,
+                            downPaymentAmount: 3542,
+                            financedAmount: 14168,
+                            months: 12,
+                            monthlyPayment: 1180.66,
+                            status: 'pending'
+                        }
+                    ];
+                    this.sales = [
+                        {
+                            id: 201,
+                            code: 'VEN-1001',
+                            date: new Date().toISOString(),
+                            clientName: 'Ana López',
+                            paymentType: 'contado',
+                            items: [{ name: 'Microondas Whirlpool 1.1 cu ft', qty: 1, price: 3450 }],
+                            total: 3450,
+                            status: 'active'
+                        }
+                    ];
+                    this.saveAllToStorage();
+                }
+            }
+        }
+    </script>
+</body>
+</html>
+```
